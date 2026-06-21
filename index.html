@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>실시간 OX 퀴즈</title>
+<title>이벤트 게임</title>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <style>
@@ -57,6 +57,15 @@
   .podium-bar.gold{background:linear-gradient(180deg,#ffd76a,#f5a623);height:120px;}
   .podium-bar.silver{background:linear-gradient(180deg,#dfe3ee,#aab2c8);height:90px;}
   .podium-bar.bronze{background:linear-gradient(180deg,#e8b48a,#c97f4d);height:65px;}
+
+  .winner-row{display:flex;align-items:center;gap:14px;padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;}
+  .winner-rank{width:50px;flex-shrink:0;font-size:18px;font-weight:900;color:var(--primary-dark);text-align:center;}
+  .winner-name{flex:1;font-size:15px;font-weight:700;}
+  .coupon{width:130px;height:74px;border-radius:10px;flex-shrink:0;position:relative;
+    background:linear-gradient(135deg,#e8fdfb,#bdf3ee);border:1px solid #5fd6cc;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.1);}
+  .coupon .brand{font-size:11px;font-weight:900;color:#0c8a7f;letter-spacing:0.3px;}
+  .coupon .amount{font-size:15px;font-weight:900;color:#066158;margin-top:2px;}
   .final-rest-list{text-align:left;border-top:1px solid var(--border);padding-top:14px;margin-top:6px;}
   .final-rest-row{display:flex;justify-content:space-between;padding:8px 4px;font-size:15px;border-bottom:1px solid var(--border);}
   .final-rest-row b{color:var(--primary-dark);}
@@ -90,7 +99,7 @@
 <body>
 
 <div class="wrap" id="entryWrap">
-  <h1>⭕❌ 실시간 OX 퀴즈</h1>
+  <h1>🎮 이벤트 게임</h1>
   <div class="sub">진행자라면 [방 만들기], 참가자라면 [참가하기]</div>
   <div class="tabs">
     <button class="tab-btn active" id="tabHost">👑 방 만들기 (진행자)</button>
@@ -167,29 +176,30 @@
   </div>
 
   <div class="card">
-    <button class="btn secondary" id="showFinalBtn">🏆 최종 순위 확인</button>
+    <button class="btn secondary" id="showFinalBtn">🎁 최종 결과 (상품 공개)</button>
     <button class="btn danger" id="resetRoomBtn">방 초기화 (새 게임)</button>
   </div>
 </div>
 
 <div class="final-overlay hidden" id="finalOverlay">
   <div class="final-box">
-    <h2>🏆 최종 순위</h2>
-    <div class="podium" id="podiumBox"></div>
-    <div class="final-rest-list" id="restListBox"></div>
+    <h2>🎁 최종 결과 발표</h2>
+    <div id="winnerListBox"></div>
     <button class="btn final-close-btn" id="closeFinalBtn">닫기</button>
   </div>
 </div>
 
 <!-- ===================== PLAYER SCREEN ===================== -->
 <div class="wrap hidden" id="playerScreen">
-  <h1>⭕❌ <span id="pRoomLabel"></span></h1>
+  <h1>🎮 <span id="pRoomLabel"></span></h1>
   <div class="score-pill">내 닉네임: <b id="pNameLabel"></b> · 현재 점수: <b id="pScoreLabel">0</b>점</div>
   <div id="pBanner"></div>
 
   <div class="card" id="pWaitCard">
-    <div style="text-align:center;color:var(--muted);font-size:15px;padding:20px 0;">
-      진행자가 문제를 출제하면<br>여기에 OX 버튼이 나타납니다
+    <div style="text-align:center;padding:30px 10px;">
+      <div style="font-size:40px;margin-bottom:10px;">⏳</div>
+      <div style="font-size:17px;font-weight:800;margin-bottom:6px;">참가 완료! 잠시만 기다려주세요</div>
+      <div class="small-muted">진행자가 게임을 시작하면<br>자동으로 화면이 전환됩니다.</div>
     </div>
   </div>
 
@@ -349,35 +359,36 @@ function enterHostDashboard(roomCode, questions){
     }
   };
 
+  function prizeForRank(rank){
+    if(rank === 1) return 50000;
+    if(rank === 2 || rank === 3) return 30000;
+    if(rank >= 4 && rank <= 23) return 20000;
+    return 0;
+  }
+
   document.getElementById('showFinalBtn').onclick = async ()=>{
     const playersSnap = await db.ref(`oxquiz_rooms/${roomCode}/players`).get();
     const players = playersSnap.val() || {};
     const sorted = Object.values(players).sort((a,b)=>(b.score||0)-(a.score||0));
+    const winners = sorted.slice(0, 23);
 
-    const top3 = sorted.slice(0,3);
-    const order = [1,0,2]; // 2등,1등,3등 순서로 배치 (시상대 모양)
-    const medalMap = ['🥇','🥈','🥉'];
-    const barClass = ['gold','silver','bronze'];
-
-    let podiumHtml = '';
-    order.forEach(rankIdx=>{
-      const p = top3[rankIdx];
-      if(!p){ podiumHtml += `<div class="podium-item"></div>`; return; }
-      podiumHtml += `
-        <div class="podium-item">
-          <div class="podium-medal">${medalMap[rankIdx]}</div>
-          <div class="podium-name">${escapeHtml(p.name||'-')}</div>
-          <div class="podium-score">${p.score||0}점</div>
-          <div class="podium-bar ${barClass[rankIdx]}">${rankIdx+1}</div>
-        </div>`;
-    });
-    document.getElementById('podiumBox').innerHTML = podiumHtml;
-
-    const rest = sorted.slice(3);
-    document.getElementById('restListBox').innerHTML = rest.length ? rest.map((p,i)=>
-      `<div class="final-rest-row"><span>${i+4}위 ${escapeHtml(p.name||'-')}</span><b>${p.score||0}점</b></div>`
-    ).join('') : '<div class="small-muted" style="text-align:center;">참가자가 3명 이하입니다.</div>';
-
+    if(winners.length === 0){
+      document.getElementById('winnerListBox').innerHTML = '<div class="small-muted" style="padding:20px;">참가자가 없습니다.</div>';
+    } else {
+      document.getElementById('winnerListBox').innerHTML = winners.map((p,i)=>{
+        const rank = i+1;
+        const amount = prizeForRank(rank);
+        return `
+          <div class="winner-row">
+            <div class="winner-rank">${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':rank+'등'}</div>
+            <div class="winner-name">${escapeHtml(p.name||'-')} <span class="small-muted">(${p.score||0}점)</span></div>
+            <div class="coupon">
+              <div class="brand">배달의민족 쿠폰</div>
+              <div class="amount">${amount.toLocaleString()}원</div>
+            </div>
+          </div>`;
+      }).join('');
+    }
     document.getElementById('finalOverlay').classList.remove('hidden');
   };
   document.getElementById('closeFinalBtn').onclick = ()=>{
