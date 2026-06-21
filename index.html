@@ -134,11 +134,10 @@
   <div class="two-col">
     <div class="card">
       <h3 style="margin-top:0;">📊 실시간 응답 현황</h3>
-      <div class="small-muted" style="margin-bottom:6px;">접속 <span id="playerCount">0</span>명 / 응답 <span id="answeredCount">0</span>명</div>
-      <div style="display:flex;gap:16px;justify-content:center;font-size:14px;font-weight:700;">
-        <div>⭕ <span id="oCount">0</span>명</div>
-        <div>❌ <span id="xCount">0</span>명</div>
+      <div style="text-align:center;font-size:32px;font-weight:800;color:var(--primary-dark);">
+        <span id="answeredCount">0</span> / <span id="playerCount">0</span>
       </div>
+      <div class="small-muted" style="text-align:center;">응답 완료 / 전체 접속 인원</div>
     </div>
     <div class="card">
       <h3 style="margin-top:0;">🏆 실시간 순위</h3>
@@ -305,19 +304,20 @@ function enterHostDashboard(roomCode, questions){
 
     await db.ref(`oxquiz_rooms/${roomCode}`).update({ phase:'revealed' });
 
-    // 채점: 해당 문제에 정답 맞춘 사람 점수 +1
+    // 채점: 해당 문제에 정답 맞춘 사람 점수 +1 (개별 경로로 안전하게 갱신)
     const playersSnap = await db.ref(`oxquiz_rooms/${roomCode}/players`).get();
     const players = playersSnap.val() || {};
-    const updates = {};
+    const tasks = [];
     Object.keys(players).forEach(pid=>{
       const p = players[pid];
       const ans = (p.answers || {})[curIndex];
       if(ans && ans.choice === q.answer){
-        updates[`players/${pid}/score`] = (p.score||0) + 1;
+        const newScore = (p.score||0) + 1;
+        tasks.push(db.ref(`oxquiz_rooms/${roomCode}/players/${pid}/score`).set(newScore));
       }
     });
-    if(Object.keys(updates).length){
-      await db.ref(`oxquiz_rooms/${roomCode}`).update(updates);
+    if(tasks.length){
+      await Promise.all(tasks);
     }
   };
 
@@ -333,18 +333,12 @@ function enterHostDashboard(roomCode, questions){
     const arr = Object.values(players);
     document.getElementById('playerCount').textContent = arr.length;
 
-    let answered=0, oCnt=0, xCnt=0;
+    let answered=0;
     arr.forEach(p=>{
       const ans = (p.answers || {})[curIndex];
-      if(ans){
-        answered++;
-        if(ans.choice==='O') oCnt++;
-        if(ans.choice==='X') xCnt++;
-      }
+      if(ans) answered++;
     });
     document.getElementById('answeredCount').textContent = answered;
-    document.getElementById('oCount').textContent = oCnt;
-    document.getElementById('xCount').textContent = xCnt;
 
     const sorted = [...arr].sort((a,b)=> (b.score||0)-(a.score||0));
     document.getElementById('rankTableBody').innerHTML = sorted.map((p,i)=>{
