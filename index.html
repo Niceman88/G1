@@ -44,6 +44,24 @@
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
   @media (max-width:640px){.two-col{grid-template-columns:1fr;}}
 
+  /* 최종 순위 오버레이 */
+  .final-overlay{position:fixed;inset:0;background:rgba(31,27,60,0.92);z-index:999;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .final-box{background:#fff;border-radius:24px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:32px 28px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);}
+  .final-box h2{font-size:28px;margin:0 0 20px;color:var(--primary-dark);}
+  .podium{display:flex;justify-content:center;align-items:flex-end;gap:14px;margin-bottom:24px;}
+  .podium-item{flex:1;max-width:140px;}
+  .podium-medal{font-size:36px;}
+  .podium-name{font-weight:800;font-size:16px;margin:6px 0 2px;word-break:keep-all;}
+  .podium-score{font-size:13px;color:var(--muted);font-weight:700;}
+  .podium-bar{border-radius:12px 12px 0 0;margin-top:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:20px;}
+  .podium-bar.gold{background:linear-gradient(180deg,#ffd76a,#f5a623);height:120px;}
+  .podium-bar.silver{background:linear-gradient(180deg,#dfe3ee,#aab2c8);height:90px;}
+  .podium-bar.bronze{background:linear-gradient(180deg,#e8b48a,#c97f4d);height:65px;}
+  .final-rest-list{text-align:left;border-top:1px solid var(--border);padding-top:14px;margin-top:6px;}
+  .final-rest-row{display:flex;justify-content:space-between;padding:8px 4px;font-size:15px;border-bottom:1px solid var(--border);}
+  .final-rest-row b{color:var(--primary-dark);}
+  .final-close-btn{margin-top:20px;}
+
   /* 진행자: 문제 표출 */
   .q-stage{text-align:center;padding:30px 10px;}
   .q-index{color:var(--muted);font-weight:700;font-size:13px;margin-bottom:6px;}
@@ -149,7 +167,17 @@
   </div>
 
   <div class="card">
+    <button class="btn secondary" id="showFinalBtn">🏆 최종 순위 확인</button>
     <button class="btn danger" id="resetRoomBtn">방 초기화 (새 게임)</button>
+  </div>
+</div>
+
+<div class="final-overlay hidden" id="finalOverlay">
+  <div class="final-box">
+    <h2>🏆 최종 순위</h2>
+    <div class="podium" id="podiumBox"></div>
+    <div class="final-rest-list" id="restListBox"></div>
+    <button class="btn final-close-btn" id="closeFinalBtn">닫기</button>
   </div>
 </div>
 
@@ -319,6 +347,41 @@ function enterHostDashboard(roomCode, questions){
     if(tasks.length){
       await Promise.all(tasks);
     }
+  };
+
+  document.getElementById('showFinalBtn').onclick = async ()=>{
+    const playersSnap = await db.ref(`oxquiz_rooms/${roomCode}/players`).get();
+    const players = playersSnap.val() || {};
+    const sorted = Object.values(players).sort((a,b)=>(b.score||0)-(a.score||0));
+
+    const top3 = sorted.slice(0,3);
+    const order = [1,0,2]; // 2등,1등,3등 순서로 배치 (시상대 모양)
+    const medalMap = ['🥇','🥈','🥉'];
+    const barClass = ['gold','silver','bronze'];
+
+    let podiumHtml = '';
+    order.forEach(rankIdx=>{
+      const p = top3[rankIdx];
+      if(!p){ podiumHtml += `<div class="podium-item"></div>`; return; }
+      podiumHtml += `
+        <div class="podium-item">
+          <div class="podium-medal">${medalMap[rankIdx]}</div>
+          <div class="podium-name">${escapeHtml(p.name||'-')}</div>
+          <div class="podium-score">${p.score||0}점</div>
+          <div class="podium-bar ${barClass[rankIdx]}">${rankIdx+1}</div>
+        </div>`;
+    });
+    document.getElementById('podiumBox').innerHTML = podiumHtml;
+
+    const rest = sorted.slice(3);
+    document.getElementById('restListBox').innerHTML = rest.length ? rest.map((p,i)=>
+      `<div class="final-rest-row"><span>${i+4}위 ${escapeHtml(p.name||'-')}</span><b>${p.score||0}점</b></div>`
+    ).join('') : '<div class="small-muted" style="text-align:center;">참가자가 3명 이하입니다.</div>';
+
+    document.getElementById('finalOverlay').classList.remove('hidden');
+  };
+  document.getElementById('closeFinalBtn').onclick = ()=>{
+    document.getElementById('finalOverlay').classList.add('hidden');
   };
 
   document.getElementById('resetRoomBtn').onclick = async ()=>{
