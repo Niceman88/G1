@@ -139,6 +139,15 @@
         <button class="btn secondary" id="copyUrlBtn">URL 복사</button>
       </div>
       <div class="small-muted">참가자는 위 URL로 접속하거나, 방 코드를 직접 입력하면 됩니다.</div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+        <span class="pill" style="background:#fff3cd;color:#8a6d00;">⚠️ 호스트 전용 (절대 타인에게 공유 금지)</span>
+        <div class="small-muted" style="margin:8px 0 4px;">이 URL을 즐겨찾기/북마크 해두세요. 페이지를 닫아도 이 주소로 다시 들어오면 같은 방을 호스트로 계속 이어서 진행할 수 있습니다.</div>
+        <div class="copy-row">
+          <input id="dashHostUrl" readonly>
+          <button class="btn secondary" id="copyHostUrlBtn">호스트 URL 복사</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -185,6 +194,8 @@
   <div class="final-box">
     <h2>🎁 최종 결과 발표</h2>
     <div id="winnerListBox"></div>
+    <div class="small-muted" style="margin-top:10px;">한 번 발표된 결과는 저장되어, 다음에 다시 들어와도 같은 결과가 보입니다.</div>
+    <button class="btn secondary" id="recalcFinalBtn" style="margin-top:8px;">🔄 현재 현황으로 다시 집계</button>
     <button class="btn final-close-btn" id="closeFinalBtn">닫기</button>
   </div>
 </div>
@@ -206,6 +217,7 @@
   <div class="card hidden" id="pQuizCard">
     <div class="q-index" id="pQIndex" style="text-align:center;color:var(--muted);font-weight:700;font-size:13px;"></div>
     <div class="q-text" id="pQText" style="text-align:center;font-size:20px;font-weight:800;margin:10px 0 4px;"></div>
+    <div id="pCountdown" style="text-align:center;font-size:40px;font-weight:900;color:var(--primary-dark);margin:6px 0;">5</div>
     <div class="ox-buttons">
       <button class="ox-btn o" id="oBtn">O</button>
       <button class="ox-btn x" id="xBtn">X</button>
@@ -256,8 +268,23 @@ document.getElementById('questionInput').addEventListener('input', (e)=>{
   document.getElementById('qCountInfo').textContent = `입력된 문제: ${lines.length}개`;
 });
 
-window.addEventListener('DOMContentLoaded', ()=>{
+window.addEventListener('DOMContentLoaded', async ()=>{
   const params = new URLSearchParams(location.search);
+  const hostParam = params.get('host');
+  if(hostParam){
+    document.getElementById('entryWrap').classList.add('hidden');
+    const roomSnap = await db.ref('oxquiz_rooms/'+hostParam).get();
+    if(!roomSnap.exists()){
+      document.getElementById('entryWrap').classList.remove('hidden');
+      alert('해당 방을 찾을 수 없습니다. 방이 초기화되었거나 코드가 잘못되었을 수 있습니다.');
+      return;
+    }
+    const room = roomSnap.val();
+    myRoomCode = hostParam;
+    enterHostDashboard(hostParam, room.questions, room);
+    return;
+  }
+
   const roomParam = params.get('room');
   if(roomParam){
     document.getElementById('tabPlayer').click();
@@ -295,7 +322,7 @@ document.getElementById('createRoomBtn').onclick = async ()=>{
   enterHostDashboard(roomCode, questions);
 };
 
-function enterHostDashboard(roomCode, questions){
+function enterHostDashboard(roomCode, questions, existingRoom){
   document.getElementById('entryWrap').classList.add('hidden');
   document.getElementById('hostDashboard').classList.remove('hidden');
   document.getElementById('dashRoomCode').textContent = roomCode;
@@ -306,7 +333,34 @@ function enterHostDashboard(roomCode, questions){
     alert('URL이 복사되었습니다. PPT에 붙여넣으세요.');
   };
 
-  let curIndex = -1;
+  const hostUrl = location.origin + location.pathname + '?host=' + roomCode;
+  document.getElementById('dashHostUrl').value = hostUrl;
+  document.getElementById('copyHostUrlBtn').onclick = ()=>{
+    navigator.clipboard.writeText(hostUrl);
+    alert('호스트 URL이 복사되었습니다. 본인만 보는 곳(메모, 즐겨찾기)에 저장해두세요.');
+  };
+
+  let curIndex = existingRoom ? (existingRoom.currentIndex ?? -1) : -1;
+
+  // 호스트 URL로 재접속한 경우, 현재 진행 상태를 화면에 복원
+  if(existingRoom && curIndex >= 0 && questions[curIndex]){
+    const q = questions[curIndex];
+    document.getElementById('hostQIndex').textContent = `문제 ${curIndex+1} / ${questions.length}`;
+    document.getElementById('hostQText').textContent = q.text;
+    if(existingRoom.phase === 'revealed'){
+      document.getElementById('hostQStatus').textContent = '정답이 공개되었습니다!';
+      document.getElementById('hostAnswerReveal').classList.remove('hidden');
+      document.getElementById('badgeO').classList.toggle('dim', q.answer !== 'O');
+      document.getElementById('badgeX').classList.toggle('dim', q.answer !== 'X');
+    } else if(existingRoom.phase === 'ended'){
+      document.getElementById('hostQIndex').textContent = '🎉 모든 문제 종료';
+      document.getElementById('hostQText').textContent = '게임이 끝났습니다. 최종 순위를 확인하세요!';
+      document.getElementById('hostQStatus').textContent = '';
+      document.getElementById('nextQBtn').disabled = true;
+    } else {
+      document.getElementById('hostQStatus').textContent = '참가자들이 답변 중입니다...';
+    }
+  }
 
   document.getElementById('nextQBtn').onclick = async ()=>{
     curIndex++;
@@ -366,30 +420,51 @@ function enterHostDashboard(roomCode, questions){
     return 0;
   }
 
-  document.getElementById('showFinalBtn').onclick = async ()=>{
+  function renderWinnerList(records){
+    if(!records || records.length === 0){
+      document.getElementById('winnerListBox').innerHTML = '<div class="small-muted" style="padding:20px;">참가자가 없습니다.</div>';
+      return;
+    }
+    document.getElementById('winnerListBox').innerHTML = records.map(r=>{
+      return `
+        <div class="winner-row">
+          <div class="winner-rank">${r.rank===1?'🥇':r.rank===2?'🥈':r.rank===3?'🥉':r.rank+'등'}</div>
+          <div class="winner-name">${escapeHtml(r.name||'-')} <span class="small-muted">(${r.score||0}점)</span></div>
+          <div class="coupon">
+            <div class="brand">배달의민족 쿠폰</div>
+            <div class="amount">${(r.amount||0).toLocaleString()}원</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function computeAndSaveFinalResults(){
     const playersSnap = await db.ref(`oxquiz_rooms/${roomCode}/players`).get();
     const players = playersSnap.val() || {};
     const sorted = Object.values(players).sort((a,b)=>(b.score||0)-(a.score||0));
     const winners = sorted.slice(0, 23);
 
-    if(winners.length === 0){
-      document.getElementById('winnerListBox').innerHTML = '<div class="small-muted" style="padding:20px;">참가자가 없습니다.</div>';
+    const records = winners.map((p,i)=>{
+      const rank = i+1;
+      return { rank, name: p.name||'-', score: p.score||0, amount: prizeForRank(rank) };
+    });
+
+    await db.ref(`oxquiz_rooms/${roomCode}/finalResults`).set(records);
+    renderWinnerList(records);
+  }
+
+  document.getElementById('showFinalBtn').onclick = async ()=>{
+    const savedSnap = await db.ref(`oxquiz_rooms/${roomCode}/finalResults`).get();
+    if(savedSnap.exists()){
+      renderWinnerList(savedSnap.val());
     } else {
-      document.getElementById('winnerListBox').innerHTML = winners.map((p,i)=>{
-        const rank = i+1;
-        const amount = prizeForRank(rank);
-        return `
-          <div class="winner-row">
-            <div class="winner-rank">${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':rank+'등'}</div>
-            <div class="winner-name">${escapeHtml(p.name||'-')} <span class="small-muted">(${p.score||0}점)</span></div>
-            <div class="coupon">
-              <div class="brand">배달의민족 쿠폰</div>
-              <div class="amount">${amount.toLocaleString()}원</div>
-            </div>
-          </div>`;
-      }).join('');
+      await computeAndSaveFinalResults();
     }
     document.getElementById('finalOverlay').classList.remove('hidden');
+  };
+  document.getElementById('recalcFinalBtn').onclick = async ()=>{
+    if(!confirm('현재 점수 현황을 기준으로 최종 결과를 다시 집계할까요? 기존에 저장된 결과는 덮어씌워집니다.')) return;
+    await computeAndSaveFinalResults();
   };
   document.getElementById('closeFinalBtn').onclick = ()=>{
     document.getElementById('finalOverlay').classList.add('hidden');
@@ -472,6 +547,7 @@ async function renderPlayerPhase(room){
   const quizCard = document.getElementById('pQuizCard');
 
   if(phase === 'ended'){
+    if(window._countdownTimer) clearInterval(window._countdownTimer);
     waitCard.classList.add('hidden');
     quizCard.classList.add('hidden');
     banner.innerHTML = `<div class="p-status-banner waiting">🎉 모든 문제가 끝났습니다! 최종 점수: ${myScore}점</div>`;
@@ -492,7 +568,7 @@ async function renderPlayerPhase(room){
     document.getElementById('pQIndex').textContent = `문제 ${idx+1} / ${room.questions.length}`;
     document.getElementById('pQText').textContent = q.text;
 
-    // 새 문제로 넘어왔을 때만 버튼 초기화
+    // 새 문제로 넘어왔을 때만 버튼 초기화 + 5초 카운트다운 시작
     if(currentQIndexSeen !== idx){
       currentQIndexSeen = idx;
       const oBtn = document.getElementById('oBtn');
@@ -503,6 +579,28 @@ async function renderPlayerPhase(room){
 
       oBtn.onclick = ()=>submitAnswer(idx, 'O');
       xBtn.onclick = ()=>submitAnswer(idx, 'X');
+
+      // 5초 카운트다운 (시간 내 선택하지 않으면 자동으로 더 이상 선택 불가)
+      if(window._countdownTimer) clearInterval(window._countdownTimer);
+      let remaining = 5;
+      const cdEl = document.getElementById('pCountdown');
+      cdEl.textContent = remaining;
+      cdEl.style.color = 'var(--primary-dark)';
+      window._countdownTimer = setInterval(()=>{
+        remaining--;
+        if(remaining <= 0){
+          clearInterval(window._countdownTimer);
+          cdEl.textContent = '0';
+          if(!oBtn.classList.contains('selected') && !xBtn.classList.contains('selected')){
+            oBtn.disabled = true;
+            xBtn.disabled = true;
+            banner.innerHTML = `<div class="p-status-banner wrong">⏱️ 시간이 종료되었습니다.</div>`;
+          }
+        } else {
+          cdEl.textContent = remaining;
+          if(remaining <= 2) cdEl.style.color = 'var(--danger)';
+        }
+      }, 1000);
     }
 
     // 이미 답했는지 체크
@@ -513,8 +611,10 @@ async function renderPlayerPhase(room){
       document.getElementById('xBtn').disabled = true;
       document.getElementById(myChoice==='O' ? 'oBtn':'xBtn').classList.add('selected');
       banner.innerHTML = `<div class="p-status-banner waiting">제출 완료! 정답 공개를 기다려주세요.</div>`;
+      if(window._countdownTimer){ clearInterval(window._countdownTimer); document.getElementById('pCountdown').textContent = '✓'; }
     }
   } else if(phase === 'revealed'){
+    if(window._countdownTimer) clearInterval(window._countdownTimer);
     quizCard.classList.add('hidden');
     waitCard.classList.add('hidden');
     const mySnap = await db.ref(`oxquiz_rooms/${myRoomCode}/players/${myPlayerId}/answers/${idx}`).get();
@@ -534,6 +634,7 @@ async function submitAnswer(idx, choice){
   document.getElementById('oBtn').disabled = true;
   document.getElementById('xBtn').disabled = true;
   document.getElementById(choice==='O' ? 'oBtn':'xBtn').classList.add('selected');
+  if(window._countdownTimer){ clearInterval(window._countdownTimer); document.getElementById('pCountdown').textContent = '✓'; }
   await db.ref(`oxquiz_rooms/${myRoomCode}/players/${myPlayerId}/answers/${idx}`).set({
     choice, submittedAt: firebase.database.ServerValue.TIMESTAMP
   });
